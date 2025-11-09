@@ -9,6 +9,8 @@
 struct Paddle {
     Rectangle rect{};
     float speed{640.0f}; // pixels per second
+    Color color{LIGHTGRAY};
+    int colorIndex{0};
 };
 
 struct Ball {
@@ -17,6 +19,8 @@ struct Ball {
     float radius{10.0f};
     float speed{420.0f};
     bool inPlay{false};
+    Color color{WHITE};
+    int colorIndex{0};
 };
 
 struct Brick {
@@ -31,6 +35,16 @@ constexpr int BrickCols = 12;
 constexpr int BrickRows = 6;
 constexpr float BrickSpacing = 8.0f;
 constexpr float BrickHeight = 28.0f;
+constexpr float BrickTopOffset = 100.0f;
+
+constexpr Color BrickPalette[] = {
+    {255, 102, 0, 255},   // orange-red
+    {0, 112, 221, 255},   // blue
+    {0, 191, 165, 255},   // teal-green
+    {196, 120, 255, 255}, // light purple
+    {173, 216, 230, 255}, // light blue/white
+};
+constexpr int BrickPaletteCount = sizeof(BrickPalette) / sizeof(Color);
 
 Vector2 Normalize(Vector2 v) {
     float lengthSq = v.x * v.x + v.y * v.y;
@@ -52,22 +66,21 @@ std::vector<Brick> CreateBricks() {
     float totalSpacingX = (BrickCols + 1) * BrickSpacing;
     float availableWidth = ScreenWidth - totalSpacingX;
     float brickWidth = availableWidth / BrickCols;
-    float topOffset = 100.0f;
-
     for (int row = 0; row < BrickRows; ++row) {
         for (int col = 0; col < BrickCols; ++col) {
             float x = BrickSpacing + col * (brickWidth + BrickSpacing);
-            float y = topOffset + row * (BrickHeight + BrickSpacing);
+            float y = BrickTopOffset + row * (BrickHeight + BrickSpacing);
 
-            Color color = WHITE;
-            switch (row % 4) {
-                case 0: color = RED; break;
-                case 1: color = ORANGE; break;
-                case 2: color = YELLOW; break;
-                case 3: color = GREEN; break;
+            Color color = BrickPalette[(row * BrickCols + col) % BrickPaletteCount];
+            if (row == BrickRows - 1) {
+                color = BrickPalette[col % BrickPaletteCount];
             }
 
-            bool hasGap = GetRandomValue(0, 99) < 15; // 15% chance to skip a brick
+            bool hasGap = GetRandomValue(0, 99) < 28; // 28% chance to skip a brick
+
+            if (!hasGap && GetRandomValue(0, 99) < 15) { // 15% chance for neutral white brick
+                color = WHITE;
+            }
 
             bricks.push_back(Brick{
                 .rect = {x, y, brickWidth, BrickHeight},
@@ -225,13 +238,36 @@ int HandleBallBrickCollision(Ball& ball, std::vector<Brick>& bricks, Vector2 pre
     return bricksBroken;
 }
 
+void HandlePaddleColorInput(Paddle& paddle) {
+    const int keys[] = {
+        KEY_ONE,
+        KEY_TWO,
+        KEY_THREE,
+        KEY_FOUR,
+        KEY_FIVE,
+    };
+
+    for (int i = 0; i < BrickPaletteCount && i < static_cast<int>(sizeof(keys) / sizeof(int)); ++i) {
+        if (IsKeyPressed(keys[i])) {
+            paddle.colorIndex = i;
+            paddle.color = BrickPalette[i];
+            break;
+        }
+    }
+}
+
 int main() {
     SetRandomSeed(static_cast<unsigned int>(std::time(nullptr)));
     InitWindow(ScreenWidth, ScreenHeight, "Elemental Breakout");
     SetTargetFPS(60);
 
     Paddle paddle{{ScreenWidth / 2.0f - 60.0f, ScreenHeight - 80.0f, 120.0f, 20.0f}};
+    paddle.colorIndex = GetRandomValue(0, BrickPaletteCount - 1);
+    paddle.color = BrickPalette[paddle.colorIndex];
+
     Ball ball{};
+    ball.colorIndex = GetRandomValue(0, BrickPaletteCount - 1);
+    ball.color = BrickPalette[ball.colorIndex];
     ResetBallOnPaddle(ball, paddle);
 
     std::vector<Brick> bricks = CreateBricks();
@@ -249,8 +285,10 @@ int main() {
             paused = !paused;
         }
 
+
         if (!paused && !gameOver && !gameWon) {
             UpdatePaddle(paddle, dt);
+            HandlePaddleColorInput(paddle);
         }
 
         if (!ball.inPlay) {
@@ -321,12 +359,12 @@ int main() {
             }
         }
 
-        DrawRectangleRounded(paddle.rect, 0.9f, 16, LIGHTGRAY);
-        DrawCircleV(ball.position, ball.radius, WHITE);
+        DrawRectangleRounded(paddle.rect, 0.9f, 16, paddle.color);
+        DrawCircleV(ball.position, ball.radius, ball.color);
 
         DrawText(TextFormat("Score: %d", score), 40, ScreenHeight - 60, 24, RAYWHITE);
         DrawText(TextFormat("Lives: %d", lives), ScreenWidth - 160, ScreenHeight - 60, 24, RAYWHITE);
-        const char* controlsText = "Left/Right or A/D to move, P to pause, Q to quit";
+        const char* controlsText = "Left/Right or A/D to move, P to pause, Q to quit, 1-5 to change paddle color";
         int controlsWidth = MeasureText(controlsText, 20);
         DrawText(controlsText, ScreenWidth / 2 - controlsWidth / 2, ScreenHeight - 32, 20, GRAY);
         if (paused && !gameOver && !gameWon) {
