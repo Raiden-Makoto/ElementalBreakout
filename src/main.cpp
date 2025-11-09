@@ -29,6 +29,7 @@ struct Ball {
     bool freezeReady{false};
     float freezeTimer{0.0f};
     Vector2 storedVelocity{};
+    bool vaporizeReady{false};
 };
 
 struct Brick {
@@ -66,6 +67,7 @@ constexpr int ColorIndexPurple = 3;
 constexpr int ColorIndexLightBlue = 4;
 constexpr int ColorIndexGreen = 2;
 constexpr float OverloadAoEDelay = 0.18f;
+constexpr float SurgeChainStepDelay = 0.08f;
 
 Color LightenColor(Color color, float factor) {
     auto lightenChannel = [factor](unsigned char channel) -> unsigned char {
@@ -78,6 +80,21 @@ Color LightenColor(Color color, float factor) {
         lightenChannel(color.r),
         lightenChannel(color.g),
         lightenChannel(color.b),
+        color.a
+    };
+}
+
+Color DarkenColor(Color color, float factor) {
+    auto darkenChannel = [factor](unsigned char channel) -> unsigned char {
+        int value = static_cast<int>(channel * (1.0f - factor));
+        value = std::clamp(value, 0, 255);
+        return static_cast<unsigned char>(value);
+    };
+
+    return Color{
+        darkenChannel(color.r),
+        darkenChannel(color.g),
+        darkenChannel(color.b),
         color.a
     };
 }
@@ -136,17 +153,116 @@ int FreezeConnectedBricks(std::vector<Brick>& bricks, int startRow, int startCol
     return frozenCount;
 }
 
-struct OverloadEvent {
-    int row;
-    int col;
-    float timer;
-};
+void DestroyBrick(Brick& brick);
+
+int ShatterFrozenNeighbors(std::vector<Brick>& bricks, int startRow, int startCol) {
+    int shattered = 0;
+    bool visited[BrickRows][BrickCols] = {};
+    std::queue<std::pair<int, int>> toVisit;
+
+    const std::pair<int, int> directions[] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+    for (const auto& dir : directions) {
+        toVisit.emplace(startRow + dir.first, startCol + dir.second);
+    }
+
+    while (!toVisit.empty()) {
+        auto [row, col] = toVisit.front();
+        toVisit.pop();
+
+        if (row < 0 || row >= BrickRows || col < 0 || col >= BrickCols) {
+            continue;
+        }
+        if (visited[row][col]) {
+            continue;
+        }
+        visited[row][col] = true;
+
+        Brick* brick = GetBrickAt(bricks, row, col);
+        if (brick == nullptr || !brick->active || !brick->frozen) {
+            continue;
+        }
+
+        brick->baseColor = WHITE;
+        brick->color = WHITE;
+        brick->colorIndex = -1;
+        DestroyBrick(*brick);
+        shattered += 1;
+
+        for (const auto& dir : directions) {
+            toVisit.emplace(row + dir.first, col + dir.second);
+        }
+    }
+
+    return shattered;
+}
+
+void DestroyBrick(Brick& brick) {
+    brick.active = false;
+    brick.hitPoints = 0;
+    brick.cracked = false;
+    brick.frozen = false;
+    brick.color = brick.baseColor;
+    brick.colorIndex = -1;
+}
+
+int InfuseAdjacentBricks(std::vector<Brick>& bricks, int startRow, int startCol, int newColorIndex, Color newColor) {
+    bool visited[BrickRows][BrickCols] = {};
+    std::queue<std::pair<int, int>> toVisit;
+    toVisit.emplace(startRow, startCol);
+
+    const std::pair<int, int> directions[] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+    int infused = 0;
+
+    while (!toVisit.empty()) {
+        auto [row, col] = toVisit.front();
+        toVisit.pop();
+
+        if (row < 0 || row >= BrickRows || col < 0 || col >= BrickCols) {
+            continue;
+        }
+        if (visited[row][col]) {
+            continue;
+        }
+        visited[row][col] = true;
+
+        Brick* brick = GetBrickAt(bricks, row, col);
+        if (brick == nullptr || !brick->active || brick->colorIndex != ColorIndexGreen) {
+            continue;
+        }
+
+        brick->baseColor = newColor;
+        brick->color = newColor;
+        brick->colorIndex = newColorIndex;
+        brick->cracked = false;
+        brick->hitPoints = std::max(brick->hitPoints, 2);
+        brick->frozen = false;
+        infused += 1;
+
+        for (const auto& dir : directions) {
+            toVisit.emplace(row + dir.first, col + dir.second);
+        }
+    }
+
+    return infused;
+}
 
 struct ReactionMessage {
     std::string text{};
     Color color{WHITE};
     float timer{0.0f};
     bool active{false};
+};
+
+enum class ReactionKind {
+    OverloadAoE,
+    SurgeChain,
+};
+
+struct ReactionEvent {
+    int row;
+    int col;
+    float timer;
+    ReactionKind kind;
 };
 
 void ShowReactionMessage(ReactionMessage& message, const std::string& text, Color color, float duration = 1.2f) {
@@ -163,6 +279,30 @@ void UpdateReactionMessage(ReactionMessage& message, float dt) {
     message.timer -= dt;
     if (message.timer <= 0.0f) {
         message.active = false;
+    }
+}
+
+void ScheduleSurgeChain(std::vector<ReactionEvent>& events, std::vector<Brick>& bricks, int startRow, int startCol) {
+    const std::pair<int, int> directions[] = {{1, 1}, {-1, -1}, {1, -1}, {-1, 1}};
+
+    for (const auto& dir : directions) {
+        int row = startRow + dir.first;
+        int col = startCol + dir.second;
+        int distance = 1;
+        while (row >= 0 && row < BrickRows && col >= 0 && col < BrickCols) {
+            Brick* target = GetBrickAt(bricks, row, col);
+            if (target != nullptr && target->active) {
+                events.push_back(ReactionEvent{
+                    .row = row,
+                    .col = col,
+                    .timer = SurgeChainStepDelay * static_cast<float>(distance),
+                    .kind = ReactionKind::SurgeChain,
+                });
+            }
+            row += dir.first;
+            col += dir.second;
+            distance += 1;
+        }
     }
 }
 
@@ -246,10 +386,7 @@ int ApplyOverloadedAoE(std::vector<Brick>& bricks, int centerRow, int centerCol)
         int dRow = std::abs(brick.row - centerRow);
         int dCol = std::abs(brick.col - centerCol);
         if (dRow <= 1 && dCol <= 1) {
-            brick.active = false;
-            brick.hitPoints = 0;
-            brick.cracked = false;
-            brick.color = brick.baseColor;
+            DestroyBrick(brick);
             removed += 1;
         }
     }
@@ -266,16 +403,24 @@ int CountActiveBricks(const std::vector<Brick>& bricks) {
     return active;
 }
 
-int ResolveOverloadEvents(float dt, std::vector<OverloadEvent>& events, std::vector<Brick>& bricks) {
+int ResolveReactionEvents(float dt, std::vector<ReactionEvent>& events, std::vector<Brick>& bricks) {
     int removed = 0;
-    for (OverloadEvent& event : events) {
+    for (ReactionEvent& event : events) {
         event.timer -= dt;
     }
 
     auto it = events.begin();
     while (it != events.end()) {
         if (it->timer <= 0.0f) {
-            removed += ApplyOverloadedAoE(bricks, it->row, it->col);
+            if (it->kind == ReactionKind::OverloadAoE) {
+                removed += ApplyOverloadedAoE(bricks, it->row, it->col);
+            } else if (it->kind == ReactionKind::SurgeChain) {
+                Brick* target = GetBrickAt(bricks, it->row, it->col);
+                if (target != nullptr && target->active) {
+                    DestroyBrick(*target);
+                    removed += 1;
+                }
+            }
             it = events.erase(it);
         } else {
             ++it;
@@ -292,6 +437,7 @@ void ResetBallOnPaddle(Ball& ball, const Paddle& paddle) {
     ball.freezeReady = false;
     ball.freezeTimer = 0.0f;
     ball.storedVelocity = {};
+    ball.vaporizeReady = false;
     ball.colorIndex = -1;
     ball.color = WHITE;
     ball.position = {
@@ -390,10 +536,11 @@ bool HandleBallPaddleCollision(Ball& ball, const Paddle& paddle) {
         ball.freezeTimer = 0.0f;
         ball.storedVelocity = {};
     }
+    ball.vaporizeReady = false;
     return true;
 }
 
-int HandleBallBrickCollision(Ball& ball, std::vector<Brick>& bricks, Vector2 previousPosition, std::vector<OverloadEvent>& overloadEvents, ReactionMessage& reactionMessage) {
+int HandleBallBrickCollision(Ball& ball, std::vector<Brick>& bricks, Vector2 previousPosition, std::vector<ReactionEvent>& reactionEvents, ReactionMessage& reactionMessage) {
     if (!ball.inPlay) {
         return 0;
     }
@@ -478,6 +625,32 @@ int HandleBallBrickCollision(Ball& ball, std::vector<Brick>& bricks, Vector2 pre
         bool overloadTriggered = ball.overloaded;
         bool instantBreak = triggeredSwirl || overloadTriggered;
         bool destroyedThisHit = false;
+        bool shatterFrozenCluster = false;
+
+        bool vaporizeTriggered = false;
+        bool infuseTriggered = false;
+        bool meltTriggered = false;
+        bool liquefyTriggered = false;
+        bool surgeTriggered = false;
+        if (ball.colorIndex == ColorIndexBlue && brick.colorIndex == ColorIndexRed) {
+            instantBreak = true;
+            vaporizeTriggered = true;
+            ShowReactionMessage(reactionMessage, "Vaporize!", BrickPalette[ColorIndexBlue]);
+        } else if (ball.colorIndex == ColorIndexLightBlue && brick.colorIndex == ColorIndexRed) {
+            liquefyTriggered = true;
+            ShowReactionMessage(reactionMessage, "Liquefy!", BrickPalette[ColorIndexBlue]);
+        } else if ((ball.colorIndex == ColorIndexPurple && brick.colorIndex == ColorIndexBlue) ||
+                   (ball.colorIndex == ColorIndexBlue && brick.colorIndex == ColorIndexPurple)) {
+            surgeTriggered = true;
+            instantBreak = true;
+            ShowReactionMessage(reactionMessage, "Surge!", BrickPalette[ColorIndexPurple]);
+        } else if (ball.colorIndex != ColorIndexGreen && brick.colorIndex == ColorIndexGreen) {
+            int infused = InfuseAdjacentBricks(bricks, brick.row, brick.col, ball.colorIndex, ball.color);
+            if (infused > 0) {
+                infuseTriggered = true;
+                ShowReactionMessage(reactionMessage, "Infuse!", BrickPalette[ColorIndexGreen]);
+            }
+        }
 
         if (brick.frozen) {
             if (ball.colorIndex == ColorIndexRed) {
@@ -487,45 +660,54 @@ int HandleBallBrickCollision(Ball& ball, std::vector<Brick>& bricks, Vector2 pre
                 brick.colorIndex = -1;
                 brick.hitPoints = 1;
                 brick.cracked = false;
+                meltTriggered = true;
+                ShowReactionMessage(reactionMessage, "Melt!", ORANGE);
             } else {
                 instantBreak = true;
+                shatterFrozenCluster = true;
             }
         }
 
         if (instantBreak) {
-            brick.active = false;
-            brick.hitPoints = 0;
-            brick.cracked = false;
-            brick.color = brick.baseColor;
+            DestroyBrick(brick);
             destroyedThisHit = true;
-            brick.frozen = false;
+        } else if (liquefyTriggered) {
+            brick.baseColor = BrickPalette[ColorIndexBlue];
+            brick.color = brick.baseColor;
+            brick.colorIndex = ColorIndexBlue;
+            brick.cracked = false;
+            brick.hitPoints = std::max(brick.hitPoints, 2);
+        } else if (infuseTriggered) {
+            brick.baseColor = ball.color;
+            brick.color = ball.color;
+            brick.colorIndex = ball.colorIndex;
         } else {
             brick.hitPoints -= 1;
             if (brick.hitPoints <= 0) {
-                brick.active = false;
-                brick.hitPoints = 0;
+                DestroyBrick(brick);
                 destroyedThisHit = true;
-                brick.frozen = false;
             } else {
                 brick.cracked = true;
-                brick.color = LightenColor(brick.baseColor, 0.45f);
+                brick.color = DarkenColor(brick.baseColor, 0.35f);
             }
         }
 
         if (triggeredSwirl) {
-            overloadEvents.push_back(OverloadEvent{
+            reactionEvents.push_back(ReactionEvent{
                 .row = brick.row,
                 .col = brick.col,
                 .timer = OverloadAoEDelay,
+                .kind = ReactionKind::OverloadAoE,
             });
             ShowReactionMessage(reactionMessage, "Swirl!", BrickPalette[ColorIndexGreen]);
         }
 
         if (overloadTriggered) {
-            overloadEvents.push_back(OverloadEvent{
+            reactionEvents.push_back(ReactionEvent{
                 .row = brick.row,
                 .col = brick.col,
                 .timer = OverloadAoEDelay,
+                .kind = ReactionKind::OverloadAoE,
             });
             ShowReactionMessage(reactionMessage, "Overloaded!", BrickPalette[ColorIndexRed]);
             ball.overloaded = false;
@@ -533,6 +715,16 @@ int HandleBallBrickCollision(Ball& ball, std::vector<Brick>& bricks, Vector2 pre
 
         if (destroyedThisHit) {
             bricksBroken += 1;
+            if (shatterFrozenCluster) {
+                int shattered = ShatterFrozenNeighbors(bricks, brick.row, brick.col);
+                bricksBroken += shattered;
+            }
+            if (vaporizeTriggered) {
+                // already handled by destroyBrick which resets color index
+            }
+            if (surgeTriggered) {
+                ScheduleSurgeChain(reactionEvents, bricks, brick.row, brick.col);
+            }
         }
 
         break;
@@ -573,7 +765,7 @@ int main() {
     ResetBallOnPaddle(ball, paddle);
 
     std::vector<Brick> bricks = CreateBricks();
-    std::vector<OverloadEvent> overloadEvents;
+    std::vector<ReactionEvent> reactionEvents;
     ReactionMessage reactionMessage;
 
     int score = 0;
@@ -648,7 +840,7 @@ int main() {
                      ShowReactionMessage(reactionMessage, "Freeze!", BrickPalette[ColorIndexLightBlue]);
                  }
             }
-            score += HandleBallBrickCollision(ball, bricks, previousPosition, overloadEvents, reactionMessage);
+            score += HandleBallBrickCollision(ball, bricks, previousPosition, reactionEvents, reactionMessage);
 
             int activeBricks = CountActiveBricks(bricks);
 
@@ -667,7 +859,7 @@ int main() {
         }
 
         if (!paused && !gameOver && !gameWon) {
-            int extraRemoved = ResolveOverloadEvents(dt, overloadEvents, bricks);
+            int extraRemoved = ResolveReactionEvents(dt, reactionEvents, bricks);
             if (extraRemoved > 0) {
                 score += extraRemoved;
                 if (CountActiveBricks(bricks) == 0) {
