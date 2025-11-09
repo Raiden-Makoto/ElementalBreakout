@@ -154,6 +154,8 @@ int ResolveOverloadEvents(float dt, std::vector<OverloadEvent>& events, std::vec
 void ResetBallOnPaddle(Ball& ball, const Paddle& paddle) {
     ball.inPlay = false;
     ball.overloaded = false;
+    ball.colorIndex = -1;
+    ball.color = WHITE;
     ball.position = {
         paddle.rect.x + paddle.rect.width * 0.5f,
         paddle.rect.y - ball.radius - 1.0f,
@@ -225,6 +227,13 @@ bool HandleBallPaddleCollision(Ball& ball, const Paddle& paddle) {
 
     bool overloadedTrigger = (ball.colorIndex == ColorIndexPurple && paddle.colorIndex == ColorIndexRed) ||
                              (ball.colorIndex == ColorIndexRed && paddle.colorIndex == ColorIndexPurple);
+    if (paddle.colorIndex >= 0 && paddle.colorIndex < BrickPaletteCount) {
+        ball.colorIndex = paddle.colorIndex;
+        ball.color = BrickPalette[ball.colorIndex];
+    } else {
+        ball.colorIndex = -1;
+        ball.color = WHITE;
+    }
     ball.overloaded = overloadedTrigger;
     return true;
 }
@@ -338,8 +347,8 @@ int main() {
     paddle.color = BrickPalette[paddle.colorIndex];
 
     Ball ball{};
-    ball.colorIndex = ColorIndexRed;
-    ball.color = BrickPalette[ball.colorIndex];
+    ball.colorIndex = -1;
+    ball.color = WHITE;
     ResetBallOnPaddle(ball, paddle);
 
     std::vector<Brick> bricks = CreateBricks();
