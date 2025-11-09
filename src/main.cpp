@@ -48,7 +48,7 @@ struct Brick {
 constexpr int ScreenWidth = 960;
 constexpr int ScreenHeight = 720;
 constexpr int BrickCols = 12;
-constexpr int BrickRows = 6;
+constexpr int BrickRows = 7;
 constexpr float BrickSpacing = 8.0f;
 constexpr float BrickHeight = 28.0f;
 constexpr float BrickTopOffset = 100.0f;
@@ -769,7 +769,7 @@ int main() {
     ReactionMessage reactionMessage;
 
     int score = 0;
-    int lives = 3;
+    int lives = 1;
     bool gameWon = false;
     bool gameOver = false;
     bool paused = false;
@@ -845,8 +845,12 @@ int main() {
             int activeBricks = CountActiveBricks(bricks);
 
             if (activeBricks == 0) {
-                gameWon = true;
+                bricks = CreateBricks();
+                ball.speed *= 1.15f;
                 ball.inPlay = false;
+                ResetBallOnPaddle(ball, paddle);
+                reactionEvents.clear();
+                reactionMessage.active = false;
             }
 
             if (ball.position.y - ball.radius > ScreenHeight) {
@@ -872,11 +876,14 @@ int main() {
         if ((gameOver || gameWon) && IsKeyPressed(KEY_ENTER)) {
             bricks = CreateBricks();
             score = 0;
-            lives = 3;
+            lives = 1;
             gameOver = false;
             gameWon = false;
             paused = false;
+            ball.speed = 420.0f;
             ResetBallOnPaddle(ball, paddle);
+            paddle.rect.x = ScreenWidth / 2.0f - paddle.rect.width * 0.5f;
+            paddle.rect.y = ScreenHeight - 80.0f;
         }
 
         BeginDrawing();
